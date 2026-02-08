@@ -2,7 +2,7 @@
 import os
 import json
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import streamlit as st
 
@@ -21,9 +21,62 @@ except Exception:
 # =============================
 RELATIONS = ["친구", "연인", "부모", "선생님", "동료", "상사", "고객", "기타"]
 PURPOSES = ["감사", "사과", "응원", "축하", "요청", "근황", "이별", "기타"]
-TONES = ["담백", "다정", "진지", "캐주얼", "격식"]
+
+# ✅ 변경: 톤 옵션 + 순서 유지
+TONES = ["친근", "유머", "다정", "진지", "격식"]
+
 LENGTHS = ["1~2문장", "5~6문장", "10문장 이상"]
 EDIT_TARGETS = ["도입", "핵심 메시지 문단", "마무리"]
+
+# ✅ 변경: 톤을 더 강하게 반영하기 위한 가이드/강도/temperature
+TONE_GUIDE = {
+    "친근": [
+        "말투: 편하게, 과하게 가볍지 않게. 구어체 가능.",
+        "문장 길이: 짧고 리듬감 있게.",
+        "표현: 공감/맞장구(예: '나도 그 생각 했어')는 1~2번까지만.",
+        "금지: 과한 감탄/오글거림, 과도한 이모지.",
+    ],
+    "유머": [
+        "말투: 가볍게 웃길 수 있지만 상대를 놀리거나 비꼬지 말 것.",
+        "유머 강도: 1~2번만 툭 치고, 본문 핵심은 진지하게 전달.",
+        "기법: 과장/비유 1회 정도는 OK, 내부자 농담은 컨텍스트 없으면 금지.",
+        "금지: 조롱, 비하, 공격적 농담, 민감 주제(외모/정치/혐오 등).",
+    ],
+    "다정": [
+        "말투: 따뜻하고 배려 있게. 상대 감정을 먼저 인정/공감.",
+        "감정 단어: 문단당 1~2개 정도로 과하지 않게.",
+        "표현: '고마워/소중해/응원해' 같은 직접 표현 1~2회는 선명하게.",
+        "금지: 장황한 감정 과잉, 뻔한 미사여구 남발.",
+    ],
+    "진지": [
+        "말투: 차분하고 또렷하게. 핵심 메시지를 앞쪽에 명확히.",
+        "구성: 이유/맥락 → 결론/요청 순으로 논리적으로.",
+        "문장: 군더더기 없이 단정하게.",
+        "금지: 가벼운 농담, 지나친 완곡 표현으로 핵심 흐리기.",
+    ],
+    "격식": [
+        "말투: 존댓말, 공손하고 단정하게. 호칭/호격 일관성 유지.",
+        "표현: 요청/제안은 완곡하게(예: '가능하실지 여쭙습니다').",
+        "구성: 인사/배경 → 핵심 → 마무리 인사.",
+        "금지: 반말/구어체/이모지/과한 감정 표현.",
+    ],
+}
+
+TONE_STRENGTH = {
+    "친근": "톤 강도: 중간 이상(친근함이 충분히 느껴지게).",
+    "유머": "톤 강도: 강하게(유머 포인트는 1~2번 확실히).",
+    "다정": "톤 강도: 강하게(다정함이 분명히 느껴지게).",
+    "진지": "톤 강도: 강하게(진중하고 단정한 분위기 유지).",
+    "격식": "톤 강도: 매우 강하게(공손/격식 유지, 흐트러짐 금지).",
+}
+
+TONE_TEMPERATURE = {
+    "친근": 0.7,
+    "유머": 0.9,
+    "다정": 0.7,
+    "진지": 0.5,
+    "격식": 0.4,
+}
 
 
 def now_ts() -> str:
@@ -40,7 +93,7 @@ def reset_all():
         "relation": "친구",
         "salutation": "",
         "purpose": "감사",
-        "tone": "담백",
+        "tone": "친근",  # ✅ 변경
         "length": "5~6문장",
     }
     st.session_state.inputs = {
@@ -70,7 +123,7 @@ def init_state():
             "relation": "친구",
             "salutation": "",
             "purpose": "감사",
-            "tone": "담백",
+            "tone": "친근",  # ✅ 변경
             "length": "5~6문장",
         }
 
@@ -93,18 +146,16 @@ def init_state():
 
 
 def join_draft(parts: Dict[str, str]) -> str:
-    # parts: intro, body, closing
-    blocks = [parts.get("intro", "").strip(), parts.get("body", "").strip(), parts.get("closing", "").strip()]
+    blocks = [
+        parts.get("intro", "").strip(),
+        parts.get("body", "").strip(),
+        parts.get("closing", "").strip(),
+    ]
     blocks = [b for b in blocks if b]
     return "\n\n".join(blocks).strip()
 
 
 def split_draft_to_parts(text: str) -> Dict[str, str]:
-    """
-    단순 분리: 빈 줄 기준으로 문단을 나눠,
-    1문단=도입, 중간=본문(합침), 마지막=마무리로 매핑.
-    (LLM이 JSON으로 parts를 주면 더 좋지만, 프로젝트용으로는 이 정도도 충분)
-    """
     paras = [p.strip() for p in text.strip().split("\n\n") if p.strip()]
     if not paras:
         return {"intro": "", "body": "", "closing": ""}
@@ -143,18 +194,12 @@ def require_core_ok() -> Optional[str]:
 # GPT Call
 # =============================
 def call_gpt(system: str, user: str, api_key: str, model: str = "gpt-4.1-mini", temperature: float = 0.7) -> str:
-    """
-    - OpenAI Python SDK(최신) 기준
-    - 환경에 SDK가 없으면 안내 메시지 반환
-    """
     if not api_key:
         return "⚠️ 사이드바에 OpenAI API Key를 입력해 주세요."
     if OpenAI is None:
         return "⚠️ openai 패키지가 설치되어 있지 않습니다. `pip install openai` 후 다시 실행해 주세요."
 
     client = OpenAI(api_key=api_key)
-
-    # Chat Completions 호환 형태 (Responses API로 바꿔도 됨)
     resp = client.chat.completions.create(
         model=model,
         temperature=temperature,
@@ -187,9 +232,20 @@ def build_prompt_common() -> Dict[str, str]:
         "10문장 이상": "상세하게 10문장 이상(하지만 장황하지 않게).",
     }.get(p["length"], "적당한 길이.")
 
+    tone = p["tone"]
+    tone_rules = "\n".join([f"- {r}" for r in TONE_GUIDE.get(tone, [])])
+    tone_strength = TONE_STRENGTH.get(tone, "")
+
     system = f"""
 너는 한국어 편지 작성 어시스턴트다.
 사용자의 입력(관계/목적/톤/분량/핵심 메시지/사실)을 바탕으로 자연스럽고 사람 같은 편지를 작성한다.
+
+[톤 적용 규칙]
+- 선택된 톤: {tone}
+- {tone_strength}
+{tone_rules}
+- 톤은 문장 곳곳에 '지속적으로' 반영하되, 부자연스럽게 과장하지 말 것.
+
 아래 규칙을 반드시 지켜라.
 {chr(10).join(constraints)}
 - 호칭과 말투는 끝까지 일관되게 유지할 것.
@@ -222,16 +278,17 @@ def generate_draft() -> str:
     prompts = build_prompt_common()
     api_key = st.session_state.settings["api_key"]
 
+    tone = st.session_state.profile["tone"]
+    temp = TONE_TEMPERATURE.get(tone, 0.7)
+
     draft = call_gpt(
         system=prompts["system"],
         user=prompts["user"],
         api_key=api_key,
-        # 모델은 상황에 맞게 바꿔도 됨
         model="gpt-4.1-mini",
-        temperature=0.7,
+        temperature=temp,
     )
 
-    # 옵션: 자동 검수/다듬기
     if st.session_state.settings["polish_on"]:
         draft = polish_draft(draft)
 
@@ -240,33 +297,52 @@ def generate_draft() -> str:
 
 def polish_draft(draft: str) -> str:
     api_key = st.session_state.settings["api_key"]
-    system = """
+    tone = st.session_state.profile["tone"]
+
+    tone_rules = "\n".join([f"- {r}" for r in TONE_GUIDE.get(tone, [])])
+    tone_strength = TONE_STRENGTH.get(tone, "")
+
+    system = f"""
 너는 한국어 편지 편집자다. 사용자가 쓴 듯 자연스럽게 다듬어라.
 - 의미는 유지하고, 어색한 문장/중복/늘어짐을 고친다.
 - 말투/호칭 일관성 유지.
+- '톤'이 약해지지 않게 유지/강화한다.
+
+[톤 유지 규칙]
+- 선택된 톤: {tone}
+- {tone_strength}
+{tone_rules}
+
 - 결과는 편지 본문만 출력.
 """.strip()
 
     user = f"""
-아래 편지를 더 자연스럽게 다듬어줘.
+아래 편지를 더 자연스럽게 다듬어줘. 톤은 유지하거나 더 선명하게 만들어줘.
 
 [편지]
 {draft}
 """.strip()
 
-    return call_gpt(system=system, user=user, api_key=api_key, model="gpt-4.1-mini", temperature=0.4).strip()
+    return call_gpt(system=system, user=user, api_key=api_key, model="gpt-4.1-mini", temperature=0.3).strip()
 
 
 def rewrite_with_new_tone(new_tone: str) -> str:
-    # 기존 초안을 새 톤으로만 재작성
     api_key = st.session_state.settings["api_key"]
-    p = st.session_state.profile.copy()
-    p["tone"] = new_tone
-
     base = st.session_state.draft.strip()
-    system = """
+
+    tone_rules = "\n".join([f"- {r}" for r in TONE_GUIDE.get(new_tone, [])])
+    tone_strength = TONE_STRENGTH.get(new_tone, "")
+
+    system = f"""
 너는 한국어 편지 작성 어시스턴트다.
 주어진 편지를 '내용은 유지'하되, 요청한 톤으로 자연스럽게 재작성하라.
+
+[톤 적용 규칙]
+- 선택된 톤: {new_tone}
+- {tone_strength}
+{tone_rules}
+- 톤은 문장 곳곳에 지속적으로 반영.
+
 - 구체적 사실 추가 금지
 - 호칭/말투 일관성
 - 결과는 편지 본문만
@@ -280,29 +356,30 @@ def rewrite_with_new_tone(new_tone: str) -> str:
 {base}
 """.strip()
 
-    out = call_gpt(system=system, user=user, api_key=api_key, model="gpt-4.1-mini", temperature=0.6)
+    temp = TONE_TEMPERATURE.get(new_tone, 0.6)
+    out = call_gpt(system=system, user=user, api_key=api_key, model="gpt-4.1-mini", temperature=temp)
     if st.session_state.settings["polish_on"]:
         out = polish_draft(out)
     return out.strip()
 
 
 def edit_part(part_key: str, instruction: str) -> Dict[str, str]:
-    """
-    part_key: intro/body/closing
-    instruction: 사용자 지시(부드럽게/단호하게 등)
-    """
     api_key = st.session_state.settings["api_key"]
     parts = st.session_state.draft_parts.copy()
     target_text = parts.get(part_key, "").strip()
-
     if not target_text:
         return parts
 
-    system = """
+    tone = st.session_state.profile["tone"]
+    tone_rules = "\n".join([f"- {r}" for r in TONE_GUIDE.get(tone, [])])
+
+    system = f"""
 너는 한국어 편지 편집자다.
 사용자의 지시에 따라 '지정된 부분'만 수정하라.
 - 의미/사실 유지
 - 톤/호칭 일관성
+- 선택된 톤({tone})이 약해지지 않게 유지/강화
+{tone_rules}
 - 결과는 수정된 문단 텍스트만 출력
 """.strip()
 
@@ -330,9 +407,8 @@ def render_sidebar():
         type="password",
         key="__api_key_input",
         value=st.session_state.settings.get("api_key", ""),
-        help="OPENAI API Key를 입력하세요. (로컬에서만 사용 권장)",
+        help="OPENAI API Key를 입력하세요. (배포 시엔 Secrets 사용 권장)",
     )
-    # 반영
     st.session_state.settings["api_key"] = st.session_state.__api_key_input
 
     st.sidebar.toggle("자동 검수/다듬기 켜기", value=st.session_state.settings["polish_on"], key="__polish_toggle")
@@ -350,7 +426,7 @@ def render_sidebar():
 
     col_a, col_b = st.sidebar.columns(2)
     with col_a:
-        if st.button("불러오기", use_container_width=True, disabled=(picked == 0)):
+        if st.sidebar.button("불러오기", use_container_width=True, disabled=(picked == 0)):
             v = versions[picked - 1]
             st.session_state.profile = v["profile"]
             st.session_state.inputs = v["inputs"]
@@ -360,7 +436,7 @@ def render_sidebar():
             st.rerun()
 
     with col_b:
-        if st.button("새 편지 시작", use_container_width=True):
+        if st.sidebar.button("새 편지 시작", use_container_width=True):
             reset_all()
             st.rerun()
 
@@ -392,22 +468,42 @@ def step_header():
 
 def render_step_1():
     st.subheader("1) 기본 정보")
-
     p = st.session_state.profile
 
-    relation = st.selectbox("관계", RELATIONS, index=RELATIONS.index(p["relation"]) if p["relation"] in RELATIONS else 0)
-    # 비즈니스 관계면 톤 프리셋
+    relation = st.selectbox(
+        "관계",
+        RELATIONS,
+        index=RELATIONS.index(p["relation"]) if p["relation"] in RELATIONS else 0,
+    )
+
+    # ✅ 변경: 비즈니스 관계면 톤 프리셋 (친근/유머/다정 -> 격식)
     if relation != p["relation"]:
         p["relation"] = relation
-        if is_business_relation(relation) and p["tone"] in ["담백", "다정", "캐주얼"]:
+        if is_business_relation(relation) and p["tone"] in ["친근", "유머", "다정"]:
             p["tone"] = "격식"
 
     salutation = st.text_input("호칭(예: 민수야 / OOO님)", value=p.get("salutation", ""))
-    purpose = st.radio("편지 목적", PURPOSES, index=PURPOSES.index(p["purpose"]) if p["purpose"] in PURPOSES else 0, horizontal=True)
-    tone = st.radio("톤", TONES, index=TONES.index(p["tone"]) if p["tone"] in TONES else 0, horizontal=True)
-    length = st.selectbox("분량", LENGTHS, index=LENGTHS.index(p["length"]) if p["length"] in LENGTHS else 1)
 
-    # 저장
+    purpose = st.radio(
+        "편지 목적",
+        PURPOSES,
+        index=PURPOSES.index(p["purpose"]) if p["purpose"] in PURPOSES else 0,
+        horizontal=True,
+    )
+
+    tone = st.radio(
+        "톤",
+        TONES,
+        index=TONES.index(p["tone"]) if p["tone"] in TONES else 0,
+        horizontal=True,
+    )
+
+    length = st.selectbox(
+        "분량",
+        LENGTHS,
+        index=LENGTHS.index(p["length"]) if p["length"] in LENGTHS else 1,
+    )
+
     p["relation"] = relation
     p["salutation"] = salutation
     p["purpose"] = purpose
@@ -427,9 +523,7 @@ def render_step_1():
 
 def render_step_2():
     st.subheader("2) 핵심 내용")
-
     i = st.session_state.inputs
-    p = st.session_state.profile
 
     st.text_area(
         "핵심 메시지(필수)",
@@ -448,7 +542,12 @@ def render_step_2():
             st.text_input(f"사실 {idx+1}", value=i["facts"][idx], key=key)
             i["facts"][idx] = st.session_state[key]
 
-    st.text_input("피하고 싶은 내용(선택, 쉼표로 구분)", value=i.get("avoid", ""), key="__avoid", placeholder="예: 과한 감정표현, 장문, 이모지")
+    st.text_input(
+        "피하고 싶은 내용(선택, 쉼표로 구분)",
+        value=i.get("avoid", ""),
+        key="__avoid",
+        placeholder="예: 과한 감정표현, 장문, 이모지",
+    )
     i["avoid"] = st.session_state.__avoid
 
     with st.expander("추가 컨텍스트(선택)"):
@@ -491,7 +590,6 @@ def render_step_3():
 
     p = st.session_state.profile
 
-    # 상단: 버튼 줄
     st.markdown("**작업**")
     col1, col2, col3 = st.columns([1, 2, 2])
 
@@ -518,7 +616,6 @@ def render_step_3():
             st.session_state.step = 4
             st.rerun()
 
-    # 본문 편집
     st.markdown("**초안(편집 가능)**")
     edited = st.text_area(
         "편지 본문",
@@ -533,17 +630,11 @@ def render_step_3():
 
     st.divider()
 
-    # 부분 수정
     st.markdown("**부분 수정**")
     target = st.selectbox("수정하고 싶은 부분", EDIT_TARGETS, key="__edit_target")
     instruction = st.text_input("수정 지시", key="__edit_instruction", placeholder="예: 좀 더 부드럽게 / 더 단호하게 / 더 짧게")
 
-    # mapping
-    target_map = {
-        "도입": "intro",
-        "핵심 메시지 문단": "body",
-        "마무리": "closing",
-    }
+    target_map = {"도입": "intro", "핵심 메시지 문단": "body", "마무리": "closing"}
     part_key = target_map[target]
 
     if st.button("선택 부분만 수정", use_container_width=True, disabled=not instruction.strip()):
@@ -553,7 +644,6 @@ def render_step_3():
         st.session_state.draft = join_draft(new_parts)
         st.rerun()
 
-    # 미리보기(문단)
     with st.expander("문단 분리 미리보기"):
         parts = st.session_state.draft_parts
         st.markdown("**도입**")
@@ -563,7 +653,6 @@ def render_step_3():
         st.markdown("**마무리**")
         st.write(parts.get("closing", ""))
 
-    # 네비게이션
     c1, c2 = st.columns(2)
     with c1:
         if st.button("이전", use_container_width=True):
@@ -585,7 +674,6 @@ def render_step_4():
             st.rerun()
         return
 
-    # 최종 편집
     final_text = st.text_area("최종 편집", value=st.session_state.draft, height=320, key="__final_text")
     st.session_state.draft = final_text
     st.session_state.draft_parts = split_draft_to_parts(final_text)
@@ -593,7 +681,6 @@ def render_step_4():
     st.markdown("**복사하기**")
     st.code(final_text, language=None)
 
-    # 다운로드
     st.download_button(
         "TXT 다운로드",
         data=final_text.encode("utf-8"),
@@ -602,7 +689,6 @@ def render_step_4():
         use_container_width=True,
     )
 
-    # 버전 저장
     if st.button("버전 저장", type="primary", use_container_width=True):
         st.session_state.versions.append(
             {
@@ -619,7 +705,6 @@ def render_step_4():
         )
         st.success(f"저장 완료! (v{len(st.session_state.versions)})")
 
-    # 네비게이션
     c1, c2 = st.columns(2)
     with c1:
         if st.button("이전", use_container_width=True):
@@ -656,4 +741,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
