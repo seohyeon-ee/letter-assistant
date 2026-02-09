@@ -22,8 +22,19 @@ except Exception:
 RELATIONS = ["친구", "연인", "부모", "선생님", "동료", "상사", "고객", "기타"]
 PURPOSES = ["감사", "사과", "응원", "축하", "요청", "근황", "이별", "기타"]
 
-TONES = ["친근", "유머", "다정", "진지", "격식"]
+# ✅ 최종 6개 톤
+TONES = ["친근", "유머", "감성", "담백", "진지", "격식"]
 LENGTHS = ["1~2문장", "5~6문장", "10문장 이상"]
+
+# ✅ 톤별 결과물 박스 색상(채도 낮게)
+TONE_COLORS = {
+    "친근": "#FFF4CC",  # 연노랑
+    "유머": "#DFF5E1",  # 연초록
+    "감성": "#F8DDEA",  # 연분홍
+    "담백": "#F1F3F5",  # 연회색
+    "진지": "#DCEEFF",  # 연하늘
+    "격식": "#E9E1FF",  # 연보라
+}
 
 TONE_GUIDE = {
     "친근": [
@@ -38,11 +49,17 @@ TONE_GUIDE = {
         "기법: 과장/비유 1회 정도는 OK, 내부자 농담은 컨텍스트 없으면 금지.",
         "금지: 조롱, 비하, 공격적 농담, 민감 주제(외모/정치/혐오 등).",
     ],
-    "다정": [
-        "말투: 따뜻하고 배려 있게. 상대 감정을 먼저 인정/공감.",
-        "감정 단어: 문단당 1~2개 정도로 과하지 않게.",
-        "표현: '고마워/소중해/응원해' 같은 직접 표현 1~2회는 선명하게.",
-        "금지: 장황한 감정 과잉, 뻔한 미사여구 남발.",
+    "감성": [
+        "말투: 부드럽고 분위기 있게. 담담한 여운을 남길 것.",
+        "표현: 이미지/비유는 1~2회까지, 과장은 금지.",
+        "리듬: 문장을 너무 길게 늘이지 말고, 호흡이 느껴지게.",
+        "금지: 과한 시적 허세, 진부한 미사여구 남발, 오글거림.",
+    ],
+    "담백": [
+        "말투: 차분하고 깔끔하게. 꾸밈을 최소화.",
+        "문장: 짧고 명확하게 핵심 위주.",
+        "표현: 감정은 과하지 않게, 사실/의도는 또렷하게.",
+        "금지: 과한 감탄, 장황함, 미사여구.",
     ],
     "진지": [
         "말투: 차분하고 또렷하게. 핵심 메시지를 앞쪽에 명확히.",
@@ -61,7 +78,8 @@ TONE_GUIDE = {
 TONE_STRENGTH = {
     "친근": "톤 강도: 중간 이상(친근함이 충분히 느껴지게).",
     "유머": "톤 강도: 강하게(유머 포인트는 1~2번 확실히).",
-    "다정": "톤 강도: 강하게(다정함이 분명히 느껴지게).",
+    "감성": "톤 강도: 중간 이상(분위기/여운이 느껴지되 과장 금지).",
+    "담백": "톤 강도: 중간(담담하고 깔끔하게, 과장 없이).",
     "진지": "톤 강도: 강하게(진중하고 단정한 분위기 유지).",
     "격식": "톤 강도: 매우 강하게(공손/격식 유지, 흐트러짐 금지).",
 }
@@ -69,7 +87,8 @@ TONE_STRENGTH = {
 TONE_TEMPERATURE = {
     "친근": 0.7,
     "유머": 0.9,
-    "다정": 0.7,
+    "감성": 0.8,
+    "담백": 0.5,
     "진지": 0.5,
     "격식": 0.4,
 }
@@ -98,8 +117,10 @@ def reset_all():
         "context": "",
     }
     st.session_state.draft = ""
-    st.session_state.draft_parts = {"intro": "", "body": "", "closing": ""}
     st.session_state.versions = []
+    # 위젯 키도 초기화(동기화)
+    st.session_state["__draft_edit"] = ""
+    st.session_state["__final_text"] = ""
 
 
 def init_state():
@@ -130,38 +151,14 @@ def init_state():
     if "draft" not in st.session_state:
         st.session_state.draft = ""
 
-    if "draft_parts" not in st.session_state:
-        st.session_state.draft_parts = {"intro": "", "body": "", "closing": ""}
-
     if "versions" not in st.session_state:
         st.session_state.versions = []
 
-
-def join_draft(parts: Dict[str, str]) -> str:
-    blocks = [
-        parts.get("intro", "").strip(),
-        parts.get("body", "").strip(),
-        parts.get("closing", "").strip(),
-    ]
-    blocks = [b for b in blocks if b]
-    return "\n\n".join(blocks).strip()
-
-
-def split_draft_to_parts(text: str) -> Dict[str, str]:
-    paras = [p.strip() for p in text.strip().split("\n\n") if p.strip()]
-    if not paras:
-        return {"intro": "", "body": "", "closing": ""}
-
-    if len(paras) == 1:
-        return {"intro": paras[0], "body": "", "closing": ""}
-
-    if len(paras) == 2:
-        return {"intro": paras[0], "body": paras[1], "closing": ""}
-
-    intro = paras[0]
-    closing = paras[-1]
-    body = "\n\n".join(paras[1:-1]).strip()
-    return {"intro": intro, "body": body, "closing": closing}
+    # 위젯 상태 키(동기화용)
+    if "__draft_edit" not in st.session_state:
+        st.session_state["__draft_edit"] = st.session_state.draft
+    if "__final_text" not in st.session_state:
+        st.session_state["__final_text"] = st.session_state.draft
 
 
 def require_fields_ok() -> Optional[str]:
@@ -180,6 +177,28 @@ def require_core_ok() -> Optional[str]:
     if not msg:
         return "핵심 메시지를 입력해 주세요."
     return None
+
+
+def apply_tone_css(tone: str):
+    # 결과물/최종 편집 text_area 배경을 톤에 맞게 변경(채도 낮게)
+    bg = TONE_COLORS.get(tone, "#F1F3F5")
+    st.markdown(
+        f"""
+<style>
+/* 모든 textarea 스타일(결과물/최종 편집 포함) */
+div[data-testid="stTextArea"] textarea {{
+  background-color: {bg} !important;
+  border: 1px solid rgba(0,0,0,0.08) !important;
+}}
+/* 코드 블록(복사하기)도 살짝 통일감 */
+div[data-testid="stCodeBlock"] pre {{
+  background-color: {bg} !important;
+  border: 1px solid rgba(0,0,0,0.08) !important;
+}}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 # =============================
@@ -266,27 +285,6 @@ def build_prompt_common() -> Dict[str, str]:
     return {"system": system, "user": user}
 
 
-def generate_draft() -> str:
-    prompts = build_prompt_common()
-    api_key = st.session_state.settings["api_key"]
-
-    tone = st.session_state.profile["tone"]
-    temp = TONE_TEMPERATURE.get(tone, 0.7)
-
-    draft = call_gpt(
-        system=prompts["system"],
-        user=prompts["user"],
-        api_key=api_key,
-        model="gpt-4.1-mini",
-        temperature=temp,
-    )
-
-    if st.session_state.settings["polish_on"]:
-        draft = polish_draft(draft)
-
-    return draft.strip()
-
-
 def polish_draft(draft: str) -> str:
     api_key = st.session_state.settings["api_key"]
     tone = st.session_state.profile["tone"]
@@ -316,6 +314,27 @@ def polish_draft(draft: str) -> str:
 """.strip()
 
     return call_gpt(system=system, user=user, api_key=api_key, model="gpt-4.1-mini", temperature=0.3).strip()
+
+
+def generate_draft() -> str:
+    prompts = build_prompt_common()
+    api_key = st.session_state.settings["api_key"]
+
+    tone = st.session_state.profile["tone"]
+    temp = TONE_TEMPERATURE.get(tone, 0.7)
+
+    draft = call_gpt(
+        system=prompts["system"],
+        user=prompts["user"],
+        api_key=api_key,
+        model="gpt-4.1-mini",
+        temperature=temp,
+    )
+
+    if st.session_state.settings["polish_on"]:
+        draft = polish_draft(draft)
+
+    return draft.strip()
 
 
 def rewrite_with_new_tone(new_tone: str) -> str:
@@ -351,8 +370,16 @@ def rewrite_with_new_tone(new_tone: str) -> str:
     temp = TONE_TEMPERATURE.get(new_tone, 0.6)
     out = call_gpt(system=system, user=user, api_key=api_key, model="gpt-4.1-mini", temperature=temp)
     if st.session_state.settings["polish_on"]:
-        out = polish_draft(out)
+        # polish는 "현재 profile 톤"을 쓰므로, 톤 변경 전에 profile을 바꾸면 더 정확함.
+        pass
     return out.strip()
+
+
+def set_draft(text: str):
+    """draft가 바뀌는 모든 지점에서 호출: 위젯 키까지 동기화"""
+    st.session_state.draft = text
+    st.session_state["__draft_edit"] = text
+    st.session_state["__final_text"] = text
 
 
 # =============================
@@ -389,11 +416,7 @@ def render_sidebar():
             v = versions[picked - 1]
             st.session_state.profile = v["profile"]
             st.session_state.inputs = v["inputs"]
-            st.session_state.draft = v["draft"]
-            st.session_state.draft_parts = split_draft_to_parts(v["draft"])
-            st.session_state["__draft_edit"] = v["draft"]
-            st.session_state["__final_text"] = v["draft"]
-            
+            set_draft(v["draft"])  # ✅ 동기화 포함
             st.rerun()
 
     with col_b:
@@ -424,7 +447,7 @@ def render_sidebar():
 # =============================
 def header():
     st.title("6 letters")
-    st.caption("한 화면에서 위→아래로 스크롤하며 입력하고, 초안을 생성한 뒤 재작성/내보내기까지 할 수 있어요.")
+    st.caption("위→아래로 스크롤하며 입력하고, 초안을 생성한 뒤 톤 재작성/내보내기까지 할 수 있어요.")
 
 
 def render_basic_info():
@@ -438,10 +461,10 @@ def render_basic_info():
         key="__relation",
     )
 
-    # 비즈니스 관계면 톤 프리셋 조정
+    # 비즈니스 관계면 격식으로 유도
     if relation != p["relation"]:
         p["relation"] = relation
-        if is_business_relation(relation) and p["tone"] in ["친근", "유머", "다정"]:
+        if is_business_relation(relation) and p["tone"] in ["친근", "유머", "감성", "담백"]:
             p["tone"] = "격식"
 
     salutation = st.text_input("호칭(예: 민수야 / OOO님)", value=p.get("salutation", ""), key="__salutation")
@@ -534,10 +557,7 @@ def render_generate_actions():
         if st.button("초안 생성", type="primary", use_container_width=True, disabled=disabled):
             with st.spinner("초안을 생성 중..."):
                 draft = generate_draft()
-            st.session_state.draft = draft
-            st.session_state.draft_parts = split_draft_to_parts(draft)
-            st.session_state["__draft_edit"] = draft
-            st.session_state["__final_text"] = draft
+            set_draft(draft)  # ✅ 동기화 포함
             st.rerun()
 
     with col2:
@@ -552,9 +572,10 @@ def render_generate_actions():
 
 
 def render_draft_and_edit():
-    st.subheader("초안 / 재작성")
+    st.subheader("결과물 / 톤 재작성")
+
     if not st.session_state.draft.strip():
-        st.info("아직 초안이 없어요. 위에서 ‘초안 생성’을 눌러 주세요.")
+        st.info("아직 결과물이 없어요. 위에서 ‘초안 생성’을 눌러 주세요.")
         return
 
     p = st.session_state.profile
@@ -566,25 +587,22 @@ def render_draft_and_edit():
         if st.button("전체 재생성", use_container_width=True):
             with st.spinner("전체를 다시 생성 중..."):
                 draft = generate_draft()
-            st.session_state.draft = draft
-            st.session_state.draft_parts = split_draft_to_parts(draft)
+            set_draft(draft)  # ✅ 동기화 포함
             st.rerun()
 
     with col2:
         new_tone = st.selectbox("톤만 바꿔 재작성", TONES, index=TONES.index(p["tone"]), key="__new_tone")
         if st.button("톤 변경 적용", use_container_width=True):
             with st.spinner("톤을 바꿔 재작성 중..."):
+                # 먼저 profile 톤을 바꾸고(검수/다듬기 시 정확), draft 재작성
+                st.session_state.profile["tone"] = new_tone
                 out = rewrite_with_new_tone(new_tone)
-            st.session_state.profile["tone"] = new_tone
-            st.session_state.draft = out
-            st.session_state.draft_parts = split_draft_to_parts(out)
-        
-            st.session_state["__draft_edit"] = out
-            st.session_state["__final_text"] = out
-            
+                if st.session_state.settings["polish_on"]:
+                    out = polish_draft(out)
+            set_draft(out)  # ✅ 동기화 포함
             st.rerun()
 
-    st.markdown("**초안(편집 가능)**")
+    st.markdown("**결과물(편집 가능)**")
     edited = st.text_area(
         "편지 본문",
         value=st.session_state.draft,
@@ -592,27 +610,28 @@ def render_draft_and_edit():
         key="__draft_edit",
         label_visibility="collapsed",
     )
+    # 사용자가 직접 수정하면 draft에 반영 + 최종 편집도 동일하게 맞춤
     if edited != st.session_state.draft:
-        st.session_state.draft = edited
-        st.session_state.draft_parts = split_draft_to_parts(edited)
+        set_draft(edited)
 
 
 def render_export_and_versions():
     st.subheader("최종 / 내보내기")
     if not st.session_state.draft.strip():
-        st.info("초안이 있어야 내보내기를 할 수 있어요.")
+        st.info("결과물이 있어야 내보내기를 할 수 있어요.")
         return
 
     final_text = st.text_area("최종 편집", value=st.session_state.draft, height=320, key="__final_text")
-    st.session_state.draft = final_text
-    st.session_state.draft_parts = split_draft_to_parts(final_text)
+    # 최종 편집에서 바꾸면 draft도 함께 동기화(한 소스로 유지)
+    if final_text != st.session_state.draft:
+        set_draft(final_text)
 
     st.markdown("**복사하기**")
-    st.code(final_text, language=None)
+    st.code(st.session_state.draft, language=None)
 
     st.download_button(
         "TXT 다운로드",
-        data=final_text.encode("utf-8"),
+        data=st.session_state.draft.encode("utf-8"),
         file_name=f"letter_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
         mime="text/plain",
         use_container_width=True,
@@ -644,7 +663,9 @@ def main():
     render_sidebar()
     header()
 
-    # 스크롤형 단일 페이지 구성
+    # ✅ 현재 선택 톤에 맞춰 결과물 박스 색상 적용
+    apply_tone_css(st.session_state.profile.get("tone", "담백"))
+
     with st.container():
         render_basic_info()
         st.divider()
@@ -663,7 +684,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
