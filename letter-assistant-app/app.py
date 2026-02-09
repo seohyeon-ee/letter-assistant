@@ -575,6 +575,10 @@ def render_draft_and_edit():
             st.session_state.profile["tone"] = new_tone
             st.session_state.draft = out
             st.session_state.draft_parts = split_draft_to_parts(out)
+        
+            st.session_state["__draft_edit"] = out
+            st.session_state["__final_text"] = out
+            
             st.rerun()
 
     st.markdown("**초안(편집 가능)**")
@@ -656,4 +660,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
