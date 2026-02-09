@@ -533,6 +533,8 @@ def render_generate_actions():
                 draft = generate_draft()
             st.session_state.draft = draft
             st.session_state.draft_parts = split_draft_to_parts(draft)
+            st.session_state["__draft_edit"] = draft
+            st.session_state["__final_text"] = draft
             st.rerun()
 
     with col2:
@@ -654,3 +656,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
