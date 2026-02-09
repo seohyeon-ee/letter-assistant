@@ -22,13 +22,10 @@ except Exception:
 RELATIONS = ["친구", "연인", "부모", "선생님", "동료", "상사", "고객", "기타"]
 PURPOSES = ["감사", "사과", "응원", "축하", "요청", "근황", "이별", "기타"]
 
-# ✅ 변경: 톤 옵션 + 순서 유지
 TONES = ["친근", "유머", "다정", "진지", "격식"]
-
 LENGTHS = ["1~2문장", "5~6문장", "10문장 이상"]
 EDIT_TARGETS = ["도입", "핵심 메시지 문단", "마무리"]
 
-# ✅ 변경: 톤을 더 강하게 반영하기 위한 가이드/강도/temperature
 TONE_GUIDE = {
     "친근": [
         "말투: 편하게, 과하게 가볍지 않게. 구어체 가능.",
@@ -88,12 +85,11 @@ def is_business_relation(rel: str) -> bool:
 
 
 def reset_all():
-    st.session_state.step = 1
     st.session_state.profile = {
         "relation": "친구",
         "salutation": "",
         "purpose": "감사",
-        "tone": "친근",  # ✅ 변경
+        "tone": "친근",
         "length": "5~6문장",
     }
     st.session_state.inputs = {
@@ -108,9 +104,6 @@ def reset_all():
 
 
 def init_state():
-    if "step" not in st.session_state:
-        st.session_state.step = 1
-
     if "settings" not in st.session_state:
         st.session_state.settings = {
             "api_key": os.environ.get("OPENAI_API_KEY", ""),
@@ -123,7 +116,7 @@ def init_state():
             "relation": "친구",
             "salutation": "",
             "purpose": "감사",
-            "tone": "친근",  # ✅ 변경
+            "tone": "친근",
             "length": "5~6문장",
         }
 
@@ -432,7 +425,6 @@ def render_sidebar():
             st.session_state.inputs = v["inputs"]
             st.session_state.draft = v["draft"]
             st.session_state.draft_parts = split_draft_to_parts(v["draft"])
-            st.session_state.step = 3
             st.rerun()
 
     with col_b:
@@ -459,36 +451,38 @@ def render_sidebar():
 
 
 # =============================
-# UI: Steps
+# UI: Single page (scroll)
 # =============================
-def step_header():
+def header():
     st.title("✉️ 편지 작성 어시스턴트")
-    st.caption("단계별로 입력하고, 초안을 생성한 뒤 부분 수정/재작성으로 완성해요.")
+    st.caption("한 화면에서 위→아래로 스크롤하며 입력하고, 초안을 생성한 뒤 수정/내보내기까지 할 수 있어요.")
 
 
-def render_step_1():
-    st.subheader("1) 기본 정보")
+def render_basic_info():
+    st.subheader("기본 정보")
     p = st.session_state.profile
 
     relation = st.selectbox(
         "관계",
         RELATIONS,
         index=RELATIONS.index(p["relation"]) if p["relation"] in RELATIONS else 0,
+        key="__relation",
     )
 
-    # ✅ 변경: 비즈니스 관계면 톤 프리셋 (친근/유머/다정 -> 격식)
+    # 비즈니스 관계면 톤 프리셋 조정
     if relation != p["relation"]:
         p["relation"] = relation
         if is_business_relation(relation) and p["tone"] in ["친근", "유머", "다정"]:
             p["tone"] = "격식"
 
-    salutation = st.text_input("호칭(예: 민수야 / OOO님)", value=p.get("salutation", ""))
+    salutation = st.text_input("호칭(예: 민수야 / OOO님)", value=p.get("salutation", ""), key="__salutation")
 
     purpose = st.radio(
         "편지 목적",
         PURPOSES,
         index=PURPOSES.index(p["purpose"]) if p["purpose"] in PURPOSES else 0,
         horizontal=True,
+        key="__purpose",
     )
 
     tone = st.radio(
@@ -496,12 +490,14 @@ def render_step_1():
         TONES,
         index=TONES.index(p["tone"]) if p["tone"] in TONES else 0,
         horizontal=True,
+        key="__tone",
     )
 
     length = st.selectbox(
         "분량",
         LENGTHS,
         index=LENGTHS.index(p["length"]) if p["length"] in LENGTHS else 1,
+        key="__length",
     )
 
     p["relation"] = relation
@@ -511,18 +507,12 @@ def render_step_1():
     p["length"] = length
 
     err = require_fields_ok()
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        if st.button("다음", type="primary", use_container_width=True, disabled=bool(err)):
-            st.session_state.step = 2
-            st.rerun()
-    with c2:
-        if err:
-            st.warning(err)
+    if err:
+        st.warning(err)
 
 
-def render_step_2():
-    st.subheader("2) 핵심 내용")
+def render_core_inputs():
+    st.subheader("핵심 내용")
     i = st.session_state.inputs
 
     st.text_area(
@@ -560,38 +550,46 @@ def render_step_2():
         i["context"] = st.session_state.__context
 
     err = require_core_ok()
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("이전", use_container_width=True):
-            st.session_state.step = 1
-            st.rerun()
-    with c2:
-        if st.button("초안 생성", type="primary", use_container_width=True, disabled=bool(err)):
-            with st.spinner("초안을 생성 중..."):
-                draft = generate_draft()
-            st.session_state.draft = draft
-            st.session_state.draft_parts = split_draft_to_parts(draft)
-            st.session_state.step = 3
-            st.rerun()
-
     if err:
         st.warning(err)
 
 
-def render_step_3():
-    st.subheader("3) 생성 결과 (초안)")
+def render_generate_actions():
+    st.subheader("초안 생성")
+    err1 = require_fields_ok()
+    err2 = require_core_ok()
+    disabled = bool(err1 or err2)
 
-    if not st.session_state.draft.strip():
-        st.info("아직 초안이 없어요. 2단계에서 초안을 생성해 주세요.")
-        if st.button("2단계로 이동"):
-            st.session_state.step = 2
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.button("초안 생성", type="primary", use_container_width=True, disabled=disabled):
+            with st.spinner("초안을 생성 중..."):
+                draft = generate_draft()
+            st.session_state.draft = draft
+            st.session_state.draft_parts = split_draft_to_parts(draft)
             st.rerun()
+
+    with col2:
+        if st.button("입력 초기화(새 편지)", use_container_width=True):
+            reset_all()
+            st.rerun()
+
+    if err1:
+        st.info(f"먼저 기본 정보를 완성해 주세요: {err1}")
+    if err2:
+        st.info(f"먼저 핵심 내용을 완성해 주세요: {err2}")
+
+
+def render_draft_and_edit():
+    st.subheader("초안 / 수정")
+    if not st.session_state.draft.strip():
+        st.info("아직 초안이 없어요. 위에서 ‘초안 생성’을 눌러 주세요.")
         return
 
     p = st.session_state.profile
 
     st.markdown("**작업**")
-    col1, col2, col3 = st.columns([1, 2, 2])
+    col1, col2 = st.columns([1, 2])
 
     with col1:
         if st.button("전체 재생성", use_container_width=True):
@@ -609,11 +607,6 @@ def render_step_3():
             st.session_state.profile["tone"] = new_tone
             st.session_state.draft = out
             st.session_state.draft_parts = split_draft_to_parts(out)
-            st.rerun()
-
-    with col3:
-        if st.button("최종 단계로", type="primary", use_container_width=True):
-            st.session_state.step = 4
             st.rerun()
 
     st.markdown("**초안(편집 가능)**")
@@ -653,25 +646,11 @@ def render_step_3():
         st.markdown("**마무리**")
         st.write(parts.get("closing", ""))
 
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("이전", use_container_width=True):
-            st.session_state.step = 2
-            st.rerun()
-    with c2:
-        if st.button("최종 단계로 이동", type="primary", use_container_width=True):
-            st.session_state.step = 4
-            st.rerun()
 
-
-def render_step_4():
-    st.subheader("4) 최종 편집 / 내보내기")
-
+def render_export_and_versions():
+    st.subheader("최종 / 내보내기")
     if not st.session_state.draft.strip():
-        st.info("아직 초안이 없어요. 2단계에서 생성해 주세요.")
-        if st.button("2단계로 이동"):
-            st.session_state.step = 2
-            st.rerun()
+        st.info("초안이 있어야 내보내기를 할 수 있어요.")
         return
 
     final_text = st.text_area("최종 편집", value=st.session_state.draft, height=320, key="__final_text")
@@ -705,16 +684,6 @@ def render_step_4():
         )
         st.success(f"저장 완료! (v{len(st.session_state.versions)})")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("이전", use_container_width=True):
-            st.session_state.step = 3
-            st.rerun()
-    with c2:
-        if st.button("처음으로", use_container_width=True):
-            st.session_state.step = 1
-            st.rerun()
-
 
 # =============================
 # Main
@@ -723,20 +692,23 @@ def main():
     st.set_page_config(page_title="편지 작성 어시스턴트", page_icon="✉️", layout="wide")
     init_state()
     render_sidebar()
-    step_header()
+    header()
 
-    step = st.session_state.step
-    if step == 1:
-        render_step_1()
-    elif step == 2:
-        render_step_2()
-    elif step == 3:
-        render_step_3()
-    elif step == 4:
-        render_step_4()
-    else:
-        st.session_state.step = 1
-        st.rerun()
+    # 스크롤형 단일 페이지 구성
+    with st.container():
+        render_basic_info()
+        st.divider()
+
+        render_core_inputs()
+        st.divider()
+
+        render_generate_actions()
+        st.divider()
+
+        render_draft_and_edit()
+        st.divider()
+
+        render_export_and_versions()
 
 
 if __name__ == "__main__":
