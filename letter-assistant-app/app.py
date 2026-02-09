@@ -118,7 +118,6 @@ def reset_all():
     }
     st.session_state.draft = ""
     st.session_state.versions = []
-    # 위젯 키도 초기화(동기화)
     st.session_state["__draft_edit"] = ""
     st.session_state["__final_text"] = ""
 
@@ -154,7 +153,6 @@ def init_state():
     if "versions" not in st.session_state:
         st.session_state.versions = []
 
-    # 위젯 상태 키(동기화용)
     if "__draft_edit" not in st.session_state:
         st.session_state["__draft_edit"] = st.session_state.draft
     if "__final_text" not in st.session_state:
@@ -179,19 +177,14 @@ def require_core_ok() -> Optional[str]:
     return None
 
 
-def apply_tone_css(tone: str):
-    # 결과물/최종 편집 text_area 배경을 톤에 맞게 변경(채도 낮게)
+def apply_result_box_css(tone: str):
+    """✅ '결과물' 박스만 톤 컬러 적용 (핵심내용/최종편집에는 미적용)"""
     bg = TONE_COLORS.get(tone, "#F1F3F5")
     st.markdown(
         f"""
 <style>
-/* 모든 textarea 스타일(결과물/최종 편집 포함) */
-div[data-testid="stTextArea"] textarea {{
-  background-color: {bg} !important;
-  border: 1px solid rgba(0,0,0,0.08) !important;
-}}
-/* 코드 블록(복사하기)도 살짝 통일감 */
-div[data-testid="stCodeBlock"] pre {{
+/* 결과물 섹션만 색 적용 */
+.result-box div[data-testid="stTextArea"] textarea {{
   background-color: {bg} !important;
   border: 1px solid rgba(0,0,0,0.08) !important;
 }}
@@ -369,16 +362,14 @@ def rewrite_with_new_tone(new_tone: str) -> str:
 
     temp = TONE_TEMPERATURE.get(new_tone, 0.6)
     out = call_gpt(system=system, user=user, api_key=api_key, model="gpt-4.1-mini", temperature=temp)
-    if st.session_state.settings["polish_on"]:
-        # polish는 "현재 profile 톤"을 쓰므로, 톤 변경 전에 profile을 바꾸면 더 정확함.
-        pass
     return out.strip()
 
 
 def set_draft(text: str):
-    """draft가 바뀌는 모든 지점에서 호출: 위젯 키까지 동기화"""
     st.session_state.draft = text
     st.session_state["__draft_edit"] = text
+    # 최종 편집은 별도 입력을 존중하고 싶으면 동기화하지 않아도 되지만,
+    # 지금 UX는 "한 소스"로 유지하는 게 편해서 같이 맞춤.
     st.session_state["__final_text"] = text
 
 
@@ -416,30 +407,13 @@ def render_sidebar():
             v = versions[picked - 1]
             st.session_state.profile = v["profile"]
             st.session_state.inputs = v["inputs"]
-            set_draft(v["draft"])  # ✅ 동기화 포함
+            set_draft(v["draft"])
             st.rerun()
 
     with col_b:
         if st.sidebar.button("새 편지 시작", use_container_width=True):
             reset_all()
             st.rerun()
-
-    st.sidebar.divider()
-    st.sidebar.header("도움말")
-    with st.sidebar.expander("좋은 입력 예시"):
-        st.markdown(
-            """
-**핵심 메시지 예시**
-- "요즘 많이 고마웠고, 다음엔 내가 더 챙기고 싶어."
-- "지난번 일은 미안했고, 앞으로는 미리 얘기할게."
-- "이번 제안은 A/B 두 옵션 중 B로 진행하고 싶습니다."
-
-**반드시 포함할 사실 예시(최대 3개)**
-- "지난주에 이사 도와줌"
-- "이번 주 금요일 저녁 가능"
-- "프로젝트 마감이 2/20"
-"""
-        )
 
 
 # =============================
@@ -461,7 +435,6 @@ def render_basic_info():
         key="__relation",
     )
 
-    # 비즈니스 관계면 격식으로 유도
     if relation != p["relation"]:
         p["relation"] = relation
         if is_business_relation(relation) and p["tone"] in ["친근", "유머", "감성", "담백"]:
@@ -557,7 +530,7 @@ def render_generate_actions():
         if st.button("초안 생성", type="primary", use_container_width=True, disabled=disabled):
             with st.spinner("초안을 생성 중..."):
                 draft = generate_draft()
-            set_draft(draft)  # ✅ 동기화 포함
+            set_draft(draft)
             st.rerun()
 
     with col2:
@@ -587,22 +560,24 @@ def render_draft_and_edit():
         if st.button("전체 재생성", use_container_width=True):
             with st.spinner("전체를 다시 생성 중..."):
                 draft = generate_draft()
-            set_draft(draft)  # ✅ 동기화 포함
+            set_draft(draft)
             st.rerun()
 
     with col2:
         new_tone = st.selectbox("톤만 바꿔 재작성", TONES, index=TONES.index(p["tone"]), key="__new_tone")
         if st.button("톤 변경 적용", use_container_width=True):
             with st.spinner("톤을 바꿔 재작성 중..."):
-                # 먼저 profile 톤을 바꾸고(검수/다듬기 시 정확), draft 재작성
                 st.session_state.profile["tone"] = new_tone
                 out = rewrite_with_new_tone(new_tone)
                 if st.session_state.settings["polish_on"]:
                     out = polish_draft(out)
-            set_draft(out)  # ✅ 동기화 포함
+            set_draft(out)
             st.rerun()
 
     st.markdown("**결과물(편집 가능)**")
+
+    # ✅ 결과물 박스만 톤 색상 적용: wrapper div + CSS
+    st.markdown('<div class="result-box">', unsafe_allow_html=True)
     edited = st.text_area(
         "편지 본문",
         value=st.session_state.draft,
@@ -610,7 +585,8 @@ def render_draft_and_edit():
         key="__draft_edit",
         label_visibility="collapsed",
     )
-    # 사용자가 직접 수정하면 draft에 반영 + 최종 편집도 동일하게 맞춤
+    st.markdown("</div>", unsafe_allow_html=True)
+
     if edited != st.session_state.draft:
         set_draft(edited)
 
@@ -621,8 +597,8 @@ def render_export_and_versions():
         st.info("결과물이 있어야 내보내기를 할 수 있어요.")
         return
 
+    # ❌ 최종 편집은 색 적용 안 함 (일반 text_area 그대로)
     final_text = st.text_area("최종 편집", value=st.session_state.draft, height=320, key="__final_text")
-    # 최종 편집에서 바꾸면 draft도 함께 동기화(한 소스로 유지)
     if final_text != st.session_state.draft:
         set_draft(final_text)
 
@@ -663,8 +639,8 @@ def main():
     render_sidebar()
     header()
 
-    # ✅ 현재 선택 톤에 맞춰 결과물 박스 색상 적용
-    apply_tone_css(st.session_state.profile.get("tone", "담백"))
+    # ✅ 결과물 박스에만 톤 컬러 적용
+    apply_result_box_css(st.session_state.profile.get("tone", "담백"))
 
     with st.container():
         render_basic_info()
