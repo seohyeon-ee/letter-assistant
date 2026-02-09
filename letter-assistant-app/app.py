@@ -391,6 +391,8 @@ def render_sidebar():
             st.session_state.inputs = v["inputs"]
             st.session_state.draft = v["draft"]
             st.session_state.draft_parts = split_draft_to_parts(v["draft"])
+            st.session_state["__draft_edit"] = loaded
+            st.session_state["__final_text"] = loaded
             st.rerun()
 
     with col_b:
@@ -660,5 +662,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
