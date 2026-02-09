@@ -24,7 +24,6 @@ PURPOSES = ["감사", "사과", "응원", "축하", "요청", "근황", "이별"
 
 TONES = ["친근", "유머", "다정", "진지", "격식"]
 LENGTHS = ["1~2문장", "5~6문장", "10문장 이상"]
-EDIT_TARGETS = ["도입", "핵심 메시지 문단", "마무리"]
 
 TONE_GUIDE = {
     "친근": [
@@ -356,39 +355,6 @@ def rewrite_with_new_tone(new_tone: str) -> str:
     return out.strip()
 
 
-def edit_part(part_key: str, instruction: str) -> Dict[str, str]:
-    api_key = st.session_state.settings["api_key"]
-    parts = st.session_state.draft_parts.copy()
-    target_text = parts.get(part_key, "").strip()
-    if not target_text:
-        return parts
-
-    tone = st.session_state.profile["tone"]
-    tone_rules = "\n".join([f"- {r}" for r in TONE_GUIDE.get(tone, [])])
-
-    system = f"""
-너는 한국어 편지 편집자다.
-사용자의 지시에 따라 '지정된 부분'만 수정하라.
-- 의미/사실 유지
-- 톤/호칭 일관성
-- 선택된 톤({tone})이 약해지지 않게 유지/강화
-{tone_rules}
-- 결과는 수정된 문단 텍스트만 출력
-""".strip()
-
-    user = f"""
-[수정 지시]
-{instruction}
-
-[수정 대상 문단]
-{target_text}
-""".strip()
-
-    revised = call_gpt(system=system, user=user, api_key=api_key, model="gpt-4.1-mini", temperature=0.6).strip()
-    parts[part_key] = revised
-    return parts
-
-
 # =============================
 # UI: Sidebar
 # =============================
@@ -454,8 +420,8 @@ def render_sidebar():
 # UI: Single page (scroll)
 # =============================
 def header():
-    st.title("✉️ 편지 작성 어시스턴트")
-    st.caption("한 화면에서 위→아래로 스크롤하며 입력하고, 초안을 생성한 뒤 수정/내보내기까지 할 수 있어요.")
+    st.title("6 letters")
+    st.caption("한 화면에서 위→아래로 스크롤하며 입력하고, 초안을 생성한 뒤 재작성/내보내기까지 할 수 있어요.")
 
 
 def render_basic_info():
@@ -581,7 +547,7 @@ def render_generate_actions():
 
 
 def render_draft_and_edit():
-    st.subheader("초안 / 수정")
+    st.subheader("초안 / 재작성")
     if not st.session_state.draft.strip():
         st.info("아직 초안이 없어요. 위에서 ‘초안 생성’을 눌러 주세요.")
         return
@@ -620,31 +586,6 @@ def render_draft_and_edit():
     if edited != st.session_state.draft:
         st.session_state.draft = edited
         st.session_state.draft_parts = split_draft_to_parts(edited)
-
-    st.divider()
-
-    st.markdown("**부분 수정**")
-    target = st.selectbox("수정하고 싶은 부분", EDIT_TARGETS, key="__edit_target")
-    instruction = st.text_input("수정 지시", key="__edit_instruction", placeholder="예: 좀 더 부드럽게 / 더 단호하게 / 더 짧게")
-
-    target_map = {"도입": "intro", "핵심 메시지 문단": "body", "마무리": "closing"}
-    part_key = target_map[target]
-
-    if st.button("선택 부분만 수정", use_container_width=True, disabled=not instruction.strip()):
-        with st.spinner("선택 부분을 수정 중..."):
-            new_parts = edit_part(part_key, instruction.strip())
-        st.session_state.draft_parts = new_parts
-        st.session_state.draft = join_draft(new_parts)
-        st.rerun()
-
-    with st.expander("문단 분리 미리보기"):
-        parts = st.session_state.draft_parts
-        st.markdown("**도입**")
-        st.write(parts.get("intro", ""))
-        st.markdown("**본문**")
-        st.write(parts.get("body", ""))
-        st.markdown("**마무리**")
-        st.write(parts.get("closing", ""))
 
 
 def render_export_and_versions():
@@ -689,7 +630,7 @@ def render_export_and_versions():
 # Main
 # =============================
 def main():
-    st.set_page_config(page_title="편지 작성 어시스턴트", page_icon="✉️", layout="wide")
+    st.set_page_config(page_title="6 letters", page_icon="✉️", layout="wide")
     init_state()
     render_sidebar()
     header()
